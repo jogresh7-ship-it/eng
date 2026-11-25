@@ -1,0 +1,878 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Forge</title>
+<style>
+  :root { --bg:#282828; --panel:#353535; --panel2:#2b2b2b; --line:#1a1a1a; --text:#d6d6d6;
+          --muted:#8a8a8a; --accent:#2d6cdf; }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text);
+               font:12px system-ui, sans-serif; overflow:hidden; }
+  button { background:#454545; color:var(--text); border:1px solid #222; border-radius:3px;
+           padding:4px 9px; cursor:pointer; font:inherit; white-space:nowrap; }
+  button:hover { background:#525252; }
+  button.on { background:var(--accent); color:#fff; }
+  input, select { background:#1f1f1f; color:var(--text); border:1px solid #111; border-radius:3px;
+                  padding:4px 6px; font:inherit; min-width:0; }
+  input[type=color] { padding:0; height:24px; width:48px; }
+  .muted { color:var(--muted); font-size:11px; }
+
+  /* Project hub */
+  #launcher { position:fixed; inset:0; background:#1d1f24; display:flex;
+              align-items:center; justify-content:center; z-index:10; }
+  .card { width:580px; max-width:92vw; background:var(--panel); border:1px solid var(--line);
+          border-radius:6px; padding:18px; }
+  .title { font-size:22px; font-weight:600; margin-bottom:14px; }
+  .hub-row { display:flex; gap:8px; align-items:center; margin-bottom:10px; flex-wrap:wrap; }
+  .prow { display:flex; align-items:center; gap:8px; padding:8px 4px; border-bottom:1px solid var(--line); }
+  .prow .info { flex:1; min-width:0; }
+  .prow .pname { font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #newForm input { flex:1; }
+  #hubMsg { color:#ffb36b; margin-bottom:8px; }
+
+  /* Editor */
+  #editor { display:grid; height:100vh; grid-template-columns:240px 1fr 280px;
+            grid-template-rows:36px 1fr 220px; }
+  #toolbar { grid-column:1 / 4; display:flex; align-items:center; gap:6px; padding:0 8px;
+             background:var(--panel2); border-bottom:1px solid var(--line); overflow-x:auto; }
+  #projTitle { font-weight:600; white-space:nowrap; }
+  #status { color:var(--muted); margin-left:auto; white-space:nowrap; }
+  .panel { background:var(--panel); display:flex; flex-direction:column; min-width:0; min-height:0;
+           border:1px solid var(--line); }
+  .panel h3 { margin:0; padding:6px 8px; font-size:11px; text-transform:uppercase;
+              letter-spacing:.05em; background:var(--panel2); color:var(--muted);
+              border-bottom:1px solid var(--line); }
+  .panel .body { overflow:auto; flex:1; padding:6px; }
+  .row { display:flex; gap:6px; align-items:center; margin-bottom:6px; }
+  .lbl { width:64px; flex:none; color:var(--muted); }
+  .item { padding:4px 8px; border-radius:3px; cursor:pointer; white-space:nowrap;
+          overflow:hidden; text-overflow:ellipsis; }
+  .item:hover { background:#3d3d3d; }
+  .item.sel { background:var(--accent); color:#fff; }
+  .item.locked { color:var(--muted); cursor:default; }
+  .hint { color:var(--muted); padding:6px; }
+  #hier { grid-column:1; grid-row:2; }
+  #insp { grid-column:3; grid-row:2; }
+  #proj { grid-column:1 / 4; grid-row:3; }
+  #viewport { grid-column:2; grid-row:2; position:relative; min-width:0; min-height:0; overflow:hidden; }
+  #viewport canvas { display:block; width:100%; height:100%; }
+  #vtag { position:absolute; left:8px; top:8px; color:var(--muted); pointer-events:none;
+          background:rgba(0,0,0,.35); padding:3px 6px; border-radius:3px; }
+  #drop { position:absolute; inset:0; display:none; align-items:center; justify-content:center;
+          background:rgba(45,108,223,.25); border:2px dashed var(--accent); font-size:16px;
+          pointer-events:none; }
+  #inspBody input, #inspBody select { width:100%; }
+  #inspBody .vec { display:flex; gap:3px; flex:1; min-width:0; }
+  .blocks { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; }
+</style>
+</head>
+<body>
+
+<!-- Project hub. Plain HTML/JS with no external dependencies, so it always works. -->
+<div id="launcher">
+  <div class="card">
+    <div class="title">Forge</div>
+    <div id="hubMsg" hidden></div>
+    <div class="hub-row"><button id="newProj" class="on">+ New Project</button></div>
+    <div id="newForm" class="hub-row" hidden>
+      <input id="npName" value="My Project" placeholder="Project name">
+      <select id="npType">
+        <option value="3d">3D game</option>
+        <option value="2d">2D game (top-down)</option>
+        <option value="model">Model</option>
+        <option value="blank">Blank</option>
+      </select>
+      <button id="npCreate" class="on">Create</button>
+      <button id="npCancel">Cancel</button>
+    </div>
+    <div id="projList"></div>
+  </div>
+</div>
+
+<!-- Editor. Filled in by the 3D module below once it loads. -->
+<div id="editor" hidden>
+  <div id="toolbar">
+    <button id="btnBack">← Projects</button>
+    <span id="projTitle"></span>
+    <span class="muted" id="projType"></span>
+    <button id="btnEmpty">+ Empty</button>
+    <button id="btnImport">Import model…</button>
+    <input type="file" id="fileIn" accept=".glb,.gltf" multiple hidden>
+    <button id="btnDup" title="Ctrl+D">Duplicate</button>
+    <button id="btnCombine" title="Ctrl+G">Combine</button>
+    <button id="btnBake">Bake transforms</button>
+    <button id="btnFloor">Sit on floor</button>
+    <button id="btnExport">Export .glb</button>
+    <button id="btnPlay">▶ Play</button>
+    <button id="btnSave">Save</button>
+    <span id="status"></span>
+  </div>
+  <section class="panel" id="hier"><h3>Hierarchy</h3><div class="body" id="hierBody"></div></section>
+  <div id="viewport">
+    <div id="vtag">Click select · Ctrl+click multi-select · W/E/R move/rotate/scale · Del delete · Ctrl+S save</div>
+    <div id="drop">Drop model to import</div>
+  </div>
+  <section class="panel" id="insp"><h3>Inspector</h3><div class="body" id="inspBody"></div></section>
+  <section class="panel" id="proj"><h3>Project</h3><div class="body" id="projBody"></div></section>
+</div>
+
+<script>
+/* ================= Shared: project types and storage (no dependencies) ================= */
+const TYPES = {
+  '3d':    { label: '3D game', plate: true,  topDown: false },
+  '2d':    { label: '2D game', plate: true,  topDown: true  },
+  'model': { label: 'Model',   plate: true,  topDown: false },
+  'blank': { label: 'Blank',   plate: false, topDown: false },
+};
+
+const DB = (() => {
+  let db = null;
+  const open = () => db ?? (db = new Promise((resolve, reject) => {
+    const r = indexedDB.open('forge', 1);
+    r.onupgradeneeded = () => {
+      r.result.createObjectStore('projects', { keyPath: 'id' });
+      r.result.createObjectStore('files');
+    };
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+  }));
+  const tx = async (store, mode, fn) => {
+    const d = await open();
+    return new Promise((resolve, reject) => {
+      const t = d.transaction(store, mode);
+      const req = fn(t.objectStore(store));
+      t.oncomplete = () => resolve(req ? req.result : undefined);
+      t.onerror = () => reject(t.error);
+      t.onabort = () => reject(t.error);
+    });
+  };
+  return {
+    allProjects:    () => tx('projects', 'readonly', s => s.getAll()),
+    putProject:     p => tx('projects', 'readwrite', s => s.put(p)),
+    deleteProject:  id => tx('projects', 'readwrite', s => s.delete(id)),
+    putFile:        (k, buf) => tx('files', 'readwrite', s => s.put(buf, k)),
+    getFile:        k => tx('files', 'readonly', s => s.get(k)),
+    deleteFilesFor: pid => tx('files', 'readwrite',
+                      s => s.delete(IDBKeyRange.bound(pid + '|', pid + '|￿'))),
+  };
+})();
+
+// Shared with the editor module
+window.Forge = { TYPES, DB };
+
+/* ================= Hub logic ================= */
+const $ = id => document.getElementById(id);
+const hub = $('launcher');
+const editorEl = $('editor');
+
+function hubMessage(text) {
+  const m = $('hubMsg');
+  m.textContent = text;
+  m.hidden = !text;
+}
+function btn(text, onClick, primary = false) {
+  const b = document.createElement('button');
+  b.textContent = text;
+  if (primary) b.className = 'on';
+  b.onclick = onClick;
+  return b;
+}
+
+async function renderLauncher() {
+  const list = $('projList');
+  list.innerHTML = '';
+  let projects = [];
+  try {
+    projects = (await DB.allProjects()).sort((a, b) => b.modified - a.modified);
+  } catch (err) {
+    console.error(err);
+    hubMessage('Could not read saved projects. Is storage blocked in this browser?');
+  }
+  if (!projects.length) {
+    const h = document.createElement('div');
+    h.className = 'muted';
+    h.textContent = 'No projects yet. Create one to get started.';
+    list.append(h);
+  }
+  for (const p of projects) {
+    const row = document.createElement('div');
+    row.className = 'prow';
+    const info = document.createElement('div');
+    info.className = 'info';
+    const name = document.createElement('div');
+    name.className = 'pname';
+    name.textContent = p.name;
+    const meta = document.createElement('div');
+    meta.className = 'muted';
+    meta.textContent = `${TYPES[p.type]?.label ?? p.type} · edited ${new Date(p.modified).toLocaleString()}`;
+    info.append(name, meta);
+    row.append(info,
+      btn('Open', () => openProject(p), true),
+      btn('Delete', async ev => {
+        // confirm() is blocked in hosted pages, so use a second click instead
+        const b = ev.currentTarget;
+        if (b.dataset.armed !== '1') {
+          b.dataset.armed = '1';
+          b.textContent = 'Click again to delete';
+          setTimeout(() => { b.dataset.armed = ''; b.textContent = 'Delete'; }, 4000);
+          return;
+        }
+        await DB.deleteFilesFor(p.id);
+        await DB.deleteProject(p.id);
+        renderLauncher();
+      }));
+    list.append(row);
+  }
+}
+
+$('newProj').onclick = () => { $('newForm').hidden = false; $('npName').select(); };
+$('npCancel').onclick = () => { $('newForm').hidden = true; };
+$('npName').onkeydown = e => { if (e.key === 'Enter') $('npCreate').click(); };
+$('npCreate').onclick = async () => {
+  const p = {
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2),
+    name: $('npName').value.trim() || 'Untitled',
+    type: $('npType').value,
+    created: Date.now(),
+    modified: Date.now(),
+    assetFiles: [],
+    objects: [],
+  };
+  try {
+    await DB.putProject(p);
+  } catch (err) {
+    console.error(err);
+    hubMessage('Could not create the project. Is storage blocked in this browser?');
+    return;
+  }
+  $('newForm').hidden = true;
+  openProject(p);
+};
+
+async function openProject(p) {
+  if (!window.forgeOpen) {
+    hubMessage('The 3D editor has not loaded. It needs three.js, which is downloaded from unpkg.com or jsdelivr.net. If both are blocked on your network, the editor cannot start. Check your connection or firewall, then reload.');
+    return;
+  }
+  hubMessage('');
+  hub.hidden = true;
+  editorEl.hidden = false;
+  try {
+    await window.forgeOpen(p);
+  } catch (err) {
+    console.error(err);
+    editorEl.hidden = true;
+    hub.hidden = false;
+    hubMessage(`Could not open "${p.name}": ${err.message}`);
+  }
+}
+
+$('btnBack').onclick = async () => {
+  try { await window.forgeClose?.(); } catch (err) { console.error(err); }
+  editorEl.hidden = true;
+  hub.hidden = false;
+  renderLauncher();
+};
+
+renderLauncher();
+</script>
+
+<script type="module">
+// Load three.js from the first CDN that works. All parts come from the same CDN
+// so their copies of three.js match.
+const BASES = ['https://unpkg.com/three@0.160.0', 'https://cdn.jsdelivr.net/npm/three@0.160.0'];
+let BASE = null, THREE = null;
+for (const b of BASES) {
+  try { THREE = await import(b + '/build/three.module.js'); BASE = b; break; }
+  catch (err) { console.warn('three.js not loaded from', b, err); }
+}
+if (!THREE) throw new Error('three.js could not be loaded from unpkg.com or jsdelivr.net');
+const { OrbitControls } = await import(BASE + '/examples/jsm/controls/OrbitControls.js');
+const { TransformControls } = await import(BASE + '/examples/jsm/controls/TransformControls.js');
+const { GLTFLoader } = await import(BASE + '/examples/jsm/loaders/GLTFLoader.js');
+const { GLTFExporter } = await import(BASE + '/examples/jsm/exporters/GLTFExporter.js');
+const { mergeGeometries } = await import(BASE + '/examples/jsm/utils/BufferGeometryUtils.js');
+const { clone: cloneRig } = await import(BASE + '/examples/jsm/utils/SkeletonUtils.js');
+
+const { TYPES, DB } = window.Forge;
+const editorEl = document.getElementById('editor');
+
+/* ================= Renderer, camera, controls ================= */
+const vp = document.getElementById('viewport');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(devicePixelRatio);
+renderer.shadowMap.enabled = true;
+vp.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x2a2d34);
+const camera = new THREE.PerspectiveCamera(50, 1, 0.01, 1000);
+camera.position.set(7, 5, 9);
+const orbit = new OrbitControls(camera, renderer.domElement);
+orbit.target.set(0, 0.5, 0);
+orbit.enableDamping = true;
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x444455, 1.1));
+const sun = new THREE.DirectionalLight(0xffffff, 1.6);
+sun.position.set(6, 12, 8);
+sun.castShadow = true;
+scene.add(sun);
+
+// Base plate: the only built-in thing. Top surface at y = 0.
+const ground = new THREE.Group();
+ground.name = 'Base Plate';
+const plate = new THREE.Mesh(new THREE.BoxGeometry(50, 0.2, 50),
+                             new THREE.MeshStandardMaterial({ color: 0x6b6f76 }));
+plate.position.y = -0.1;
+plate.receiveShadow = true;
+const grid = new THREE.GridHelper(50, 50, 0x888888, 0x555555);
+grid.position.y = 0.005;
+ground.add(plate, grid);
+scene.add(ground);
+
+const tc = new TransformControls(camera, renderer.domElement);
+tc.setMode('translate');
+scene.add(tc);
+let gizmoDragging = false;
+tc.addEventListener('dragging-changed', e => { orbit.enabled = !e.value; gizmoDragging = e.value; });
+tc.addEventListener('objectChange', () => renderInspector());
+
+/* ================= State ================= */
+let project = null;
+const objects = [];      // { name, root, clips, clipIndex, assetFile, mixer, action, saved }
+const assets = [];       // { name, file, gltf }
+let selected = null;
+let multi = new Set();
+let playing = false;
+
+const $m = id => document.getElementById(id);
+const statusEl = $m('status');
+const btnPlay = $m('btnPlay');
+const round = v => Math.round(v * 1000) / 1000;
+const status = t => { statusEl.textContent = t; };
+const hint = t => Object.assign(document.createElement('div'), { className: 'hint', textContent: t });
+const btn = (text, onClick, primary = false) => {
+  const b = document.createElement('button');
+  b.textContent = text;
+  if (primary) b.className = 'on';
+  b.onclick = onClick;
+  return b;
+};
+function field(label, ...controls) {
+  const r = document.createElement('div');
+  r.className = 'row';
+  const l = document.createElement('span');
+  l.className = 'lbl';
+  l.textContent = label;
+  r.append(l, ...controls);
+  return r;
+}
+function vecControls(vec, k, step) {
+  const wrap = document.createElement('div');
+  wrap.className = 'vec';
+  ['x', 'y', 'z'].forEach(c => {
+    const i = document.createElement('input');
+    i.type = 'number';
+    i.step = step;
+    i.value = round(vec[c] * k);
+    i.oninput = () => { const v = parseFloat(i.value); if (!isNaN(v)) vec[c] = v / k; };
+    wrap.append(i);
+  });
+  return wrap;
+}
+// Hosted pages can't use <a download>; they ask the viewer through the downloads capability.
+async function download(blob, name) {
+  try {
+    const dl = await window.claude?.use?.('downloads');
+    if (dl) {
+      await dl.save({ filename: name, data: blob });
+      return true;
+    }
+  } catch (err) {
+    console.warn('downloads capability unavailable', err);
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  return true;
+}
+
+/* ================= Open / close / save / export ================= */
+const loader = new GLTFLoader();
+const parseBuffer = buf => new Promise((resolve, reject) => loader.parse(buf, '', resolve, reject));
+
+// Serialize object roots to .glb bytes. Wrapped in a Scene so each root stays a separate node.
+function exportBuffer(roots) {
+  const sc = new THREE.Scene();
+  for (const r of roots) sc.add(cloneRig(r));
+  return new Promise((resolve, reject) =>
+    new GLTFExporter().parse(sc, resolve, reject, { binary: true }));
+}
+
+function applyType(type) {
+  const t = TYPES[type];
+  ground.visible = t.plate;
+  orbit.enableRotate = !t.topDown;
+  if (t.topDown) {
+    camera.position.set(0, 18, 0.001);
+    orbit.target.set(0, 0, 0);
+  } else {
+    camera.position.set(7, 5, 9);
+    orbit.target.set(0, 0.5, 0);
+  }
+  orbit.update();
+}
+
+async function openProject(p) {
+  project = p;
+  $m('projTitle').textContent = p.name;
+  $m('projType').textContent = `[${TYPES[p.type]?.label ?? p.type}]`;
+  applyType(p.type);
+  clearScene();
+  assets.length = 0;
+
+  for (const f of p.assetFiles) {
+    try {
+      const buf = await DB.getFile(`${p.id}|${f.file}`);
+      if (!buf) continue;
+      assets.push({ name: f.name, file: f.file, gltf: await parseBuffer(buf) });
+    } catch (err) { console.error(err); }
+  }
+
+  // Linked imported models, placed with their saved transforms
+  for (const od of p.objects) {
+    const a = od.assetFile ? assets.find(x => x.file === od.assetFile) : null;
+    if (!a) continue;
+    const o = placeAsset(a);
+    o.name = od.name;
+    o.root.position.fromArray(od.position);
+    o.root.rotation.set(od.rotation[0], od.rotation[1], od.rotation[2]);
+    o.root.scale.fromArray(od.scale);
+    o.clipIndex = od.clipIndex ?? 0;
+  }
+
+  // Loose blocks, combined meshes and empties, from the saved .glb snapshot
+  try {
+    const snap = await DB.getFile(`${p.id}|__free.glb`);
+    if (snap) {
+      const gltf = await parseBuffer(snap);
+      for (const k of [...gltf.scene.children]) addObject(k.name || 'Object', k);
+    }
+  } catch (err) { console.error(err); }
+
+  select(null);
+  status(`Opened ${p.name}`);
+}
+
+async function saveProject() {
+  if (!project) return;
+  if (playing) { status('Stop play mode before saving'); return; }
+  const linked = objects.filter(o => o.assetFile);
+  const free = objects.filter(o => !o.assetFile);
+  project.objects = linked.map(o => ({
+    name: o.name,
+    assetFile: o.assetFile,
+    position: o.root.position.toArray(),
+    rotation: o.root.rotation.toArray().slice(0, 3),
+    scale: o.root.scale.toArray(),
+    clipIndex: o.clipIndex,
+  }));
+  await DB.putFile(`${project.id}|__free.glb`, await exportBuffer(free.map(o => o.root)));
+  project.modified = Date.now();
+  await DB.putProject(project);
+  status(`Saved ${project.name}`);
+}
+
+async function closeProject() {
+  if (!project) return;
+  if (playing) setPlaying(false);
+  await saveProject();
+  clearScene();
+  project = null;
+}
+
+async function exportModel() {
+  if (!project) return;
+  try {
+    const buf = await exportBuffer(objects.map(o => o.root));
+    const saved = await download(new Blob([buf], { type: 'model/gltf-binary' }), `${project.name}.glb`);
+    status(saved ? `Exported ${project.name}.glb` : 'Export cancelled');
+  } catch (err) {
+    console.error(err);
+    status('Export failed');
+  }
+}
+
+// Expose to the hub script
+window.forgeOpen = openProject;
+window.forgeClose = closeProject;
+
+/* ================= Objects ================= */
+function addObject(name, root, clips = [], assetFile = null) {
+  root.name = name;
+  root.traverse(n => { if (n.isMesh) { n.castShadow = true; n.receiveShadow = true; } });
+  scene.add(root);
+  const o = { name, root, clips, clipIndex: 0, assetFile, mixer: null, action: null, saved: null };
+  objects.push(o);
+  select(o);
+  return o;
+}
+function placeAsset(asset) {
+  return addObject(asset.name, cloneRig(asset.gltf.scene), asset.gltf.animations, asset.file);
+}
+function removeObject(o) {
+  scene.remove(o.root);
+  objects.splice(objects.indexOf(o), 1);
+  multi.delete(o);
+}
+function clearScene() {
+  tc.detach();
+  selected = null;
+  multi = new Set();
+  for (const o of objects) scene.remove(o.root);
+  objects.length = 0;
+}
+function select(o) {
+  selected = o;
+  multi = new Set(o ? [o] : []);
+  tc.detach();
+  if (o) tc.attach(o.root);
+  refresh();
+}
+function toggleSelect(o) {
+  if (multi.has(o)) multi.delete(o); else multi.add(o);
+  selected = multi.has(o) ? o : ([...multi].pop() ?? null);
+  tc.detach();
+  if (selected) tc.attach(selected.root);
+  refresh();
+}
+function refresh() {
+  renderHierarchy();
+  renderInspector();
+  renderProject();
+}
+
+/* ================= Blocks ================= */
+const PRIM = {
+  Box:      () => new THREE.BoxGeometry(1, 1, 1),
+  Sphere:   () => new THREE.SphereGeometry(0.5, 24, 16),
+  Cylinder: () => new THREE.CylinderGeometry(0.5, 0.5, 1, 24),
+  Cone:     () => new THREE.ConeGeometry(0.5, 1, 24),
+  Torus:    () => new THREE.TorusGeometry(0.5, 0.18, 16, 36),
+  Plane:    () => new THREE.PlaneGeometry(1, 1),
+};
+const PALETTE = ['#e0e0e0', '#ff8c5a', '#5ac8fa', '#7ed957', '#ffd34d', '#b58cff', '#ff6b8a'];
+
+function addBlock(kind) {
+  const mesh = new THREE.Mesh(PRIM[kind](),
+    new THREE.MeshStandardMaterial({ color: PALETTE[objects.length % PALETTE.length] }));
+  if (kind === 'Plane') { mesh.rotation.x = -Math.PI / 2; mesh.position.y = 0.01; }
+  else if (kind === 'Torus') { mesh.rotation.x = Math.PI / 2; mesh.position.y = 0.18; }
+  else mesh.position.y = 0.5;
+  mesh.position.x = (objects.length % 5) * 1.5 - 3;
+  return addObject(kind, mesh);
+}
+
+function duplicateSelected() {
+  if (!selected) return;
+  const c = cloneRig(selected.root);
+  c.position.x += 1;
+  addObject(selected.name + ' copy', c, selected.clips, selected.assetFile);
+}
+
+function combineSelected() {
+  const parts = [...multi].filter(o => o.root.isMesh);
+  if (parts.length < 2) { status('Ctrl+click two or more blocks, then Combine'); return; }
+  parts.forEach(p => p.root.updateMatrixWorld(true));
+  const geos = parts.map(p => {
+    const g = p.root.geometry;
+    const flat = g.index ? g.toNonIndexed() : g.clone();
+    flat.applyMatrix4(p.root.matrixWorld);
+    return flat;
+  });
+  const merged = mergeGeometries(geos, false);
+  if (!merged) { status("Those parts can't be combined (incompatible geometry)"); return; }
+  let offset = 0;
+  geos.forEach((g, i) => {
+    const count = g.attributes.position.count;
+    merged.addGroup(offset, count, i);
+    offset += count;
+  });
+  const materials = parts.map(p => p.root.material.clone());
+  parts.forEach(p => removeObject(p));
+  addObject('Combined', new THREE.Mesh(merged, materials));
+  status(`Combined ${parts.length} parts`);
+}
+
+function bakeSelected() {
+  const parts = [...multi].filter(o => o.root.isMesh);
+  if (!parts.length) { status('Select a block to bake its transform'); return; }
+  for (const p of parts) {
+    p.root.updateMatrixWorld(true);
+    const g = p.root.geometry.clone();
+    g.applyMatrix4(p.root.matrix);
+    p.root.geometry = g;
+    p.root.position.set(0, 0, 0);
+    p.root.quaternion.identity();
+    p.root.scale.set(1, 1, 1);
+  }
+  status(`Baked ${parts.length} transform(s) into geometry`);
+  refresh();
+}
+
+function floorSelected() {
+  for (const o of multi) {
+    const box = new THREE.Box3().setFromObject(o.root);
+    if (box.isEmpty()) continue;
+    const c = box.getCenter(new THREE.Vector3());
+    o.root.position.x -= c.x;
+    o.root.position.z -= c.z;
+    o.root.position.y -= box.min.y;
+  }
+  status('Centered on X/Z and sat on the floor');
+  refresh();
+}
+
+function deleteSelected() {
+  for (const o of [...multi]) removeObject(o);
+  select(null);
+}
+
+/* ================= Hierarchy ================= */
+function renderHierarchy() {
+  const box = $m('hierBody');
+  box.innerHTML = '';
+  if (!project) return;
+  if (ground.visible) {
+    const g = document.createElement('div');
+    g.className = 'item locked';
+    g.textContent = '🔒 Base Plate';
+    box.append(g);
+  }
+  for (const o of objects) {
+    const d = document.createElement('div');
+    d.className = 'item' + (multi.has(o) ? ' sel' : '');
+    d.textContent = o.name;
+    d.onclick = e => (e.ctrlKey || e.metaKey) ? toggleSelect(o) : select(o);
+    box.append(d);
+  }
+  if (!objects.length) box.append(hint('Empty scene. Add blocks from the Project panel or import a model.'));
+}
+
+/* ================= Inspector ================= */
+function renderInspector() {
+  const box = $m('inspBody');
+  box.innerHTML = '';
+  if (!project) return;
+  if (!selected) { box.append(hint('Nothing selected. Click an object, or Ctrl+click several.')); return; }
+  const o = selected;
+  if (multi.size > 1) box.append(hint(`${multi.size} selected. Gizmo and fields apply to the last one picked.`));
+
+  const ni = document.createElement('input');
+  ni.value = o.name;
+  ni.onchange = () => { o.name = ni.value.trim() || o.name; refresh(); };
+  box.append(field('Name', ni));
+  box.append(field('Position', vecControls(o.root.position, 1, 0.1)));
+  box.append(field('Rotation', vecControls(o.root.rotation, THREE.MathUtils.RAD2DEG, 1)));
+  box.append(field('Scale', vecControls(o.root.scale, 1, 0.05)));
+
+  if (o.root.isMesh && !Array.isArray(o.root.material)) {
+    const ci = document.createElement('input');
+    ci.type = 'color';
+    ci.value = '#' + o.root.material.color.getHexString();
+    ci.oninput = () => {
+      o.root.traverse(n => {
+        if (n.isMesh && !Array.isArray(n.material)) {
+          n.material = n.material.clone();
+          n.material.color.set(ci.value);
+        }
+      });
+    };
+    box.append(field('Color', ci));
+  }
+
+  const src = document.createElement('span');
+  src.textContent = o.assetFile ?? 'Block / part';
+  box.append(field('Source', src));
+
+  if (o.clips.length) {
+    const s = document.createElement('select');
+    o.clips.forEach((c, i) => s.add(new Option(c.name || `Clip ${i}`, i)));
+    s.value = o.clipIndex;
+    s.onchange = () => { o.clipIndex = +s.value; if (playing) startAnim(o); };
+    box.append(field('Animation', s));
+  }
+  box.append(btn('Delete', deleteSelected));
+}
+
+/* ================= Project panel ================= */
+function renderProject() {
+  const box = $m('projBody');
+  box.innerHTML = '';
+  if (!project) return;
+
+  const label = document.createElement('div');
+  label.className = 'muted';
+  label.textContent = 'Blocks';
+  const row = document.createElement('div');
+  row.className = 'blocks';
+  Object.keys(PRIM).forEach(k => row.append(btn(k, () => addBlock(k))));
+  box.append(label, row);
+
+  const label2 = document.createElement('div');
+  label2.className = 'muted';
+  label2.textContent = 'Imported models';
+  box.append(label2);
+  if (!assets.length) { box.append(hint('None yet. Use Import model… or drop a .glb file onto the Scene.')); return; }
+  for (const a of assets) {
+    const r = document.createElement('div');
+    r.className = 'row';
+    const n = document.createElement('span');
+    n.style.flex = '1';
+    n.textContent = `${a.name}  (${a.gltf.animations.length} anim)`;
+    r.append(n, btn('Place', () => placeAsset(a)));
+    box.append(r);
+  }
+}
+
+/* ================= Import ================= */
+async function importFiles(files) {
+  if (!project) return;
+  for (const f of files) {
+    if (!/\.(glb|gltf)$/i.test(f.name)) { status(`Skipped ${f.name}: only .glb / .gltf for now`); continue; }
+    try {
+      status(`Importing ${f.name}…`);
+      const buf = await f.arrayBuffer();
+      const gltf = await parseBuffer(buf.slice(0));
+      await DB.putFile(`${project.id}|${f.name}`, buf);
+      const name = f.name.replace(/\.(glb|gltf)$/i, '');
+      if (!project.assetFiles.some(x => x.file === f.name)) project.assetFiles.push({ file: f.name, name });
+      const asset = { name, file: f.name, gltf };
+      const idx = assets.findIndex(a => a.file === f.name);
+      if (idx >= 0) assets[idx] = asset; else assets.push(asset);
+      placeAsset(asset);
+      status(`Imported ${f.name}`);
+    } catch (err) {
+      console.error(err);
+      status(`Failed to import ${f.name}`);
+    }
+  }
+}
+$m('btnImport').onclick = () => $m('fileIn').click();
+$m('fileIn').onchange = e => { importFiles([...e.target.files]); e.target.value = ''; };
+$m('btnEmpty').onclick = () => { if (project) addObject('GameObject', new THREE.Group()); };
+$m('btnDup').onclick = () => { if (project && !playing) duplicateSelected(); };
+$m('btnCombine').onclick = () => { if (project && !playing) combineSelected(); };
+$m('btnBake').onclick = () => { if (project && !playing) bakeSelected(); };
+$m('btnFloor').onclick = () => { if (project && !playing) floorSelected(); };
+$m('btnExport').onclick = exportModel;
+$m('btnSave').onclick = () => saveProject();
+btnPlay.onclick = () => { if (project) setPlaying(!playing); };
+
+const dropEl = $m('drop');
+addEventListener('dragenter', e => { e.preventDefault(); if (project) dropEl.style.display = 'flex'; });
+addEventListener('dragover', e => e.preventDefault());
+addEventListener('dragleave', e => { if (!e.relatedTarget) dropEl.style.display = 'none'; });
+addEventListener('drop', e => {
+  e.preventDefault();
+  dropEl.style.display = 'none';
+  importFiles([...e.dataTransfer.files]);
+});
+
+/* ================= Picking ================= */
+const ray = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+let downAt = null;
+renderer.domElement.addEventListener('pointerdown', e => { downAt = { x: e.clientX, y: e.clientY }; });
+renderer.domElement.addEventListener('pointerup', e => {
+  if (!downAt || gizmoDragging || playing) return;
+  if (Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 4) return;
+  const r = renderer.domElement.getBoundingClientRect();
+  mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(mouse, camera);
+  const hits = ray.intersectObjects(objects.map(o => o.root), true);
+  let owner = null;
+  if (hits.length) {
+    let obj = hits[0].object;
+    while (obj && !(owner = objects.find(o => o.root === obj))) obj = obj.parent;
+  }
+  if (e.ctrlKey || e.metaKey) { if (owner) toggleSelect(owner); }
+  else select(owner || null);
+});
+
+/* ================= Play mode ================= */
+function startAnim(o) {
+  if (!o.clips.length) return;
+  o.mixer ??= new THREE.AnimationMixer(o.root);
+  o.mixer.stopAllAction();
+  o.action = o.mixer.clipAction(o.clips[o.clipIndex]);
+  o.action.reset().play();
+}
+function setPlaying(on) {
+  playing = on;
+  tc.visible = !on;
+  tc.enabled = !on;
+  for (const o of objects) {
+    if (on) {
+      o.saved = { p: o.root.position.clone(), q: o.root.quaternion.clone(), s: o.root.scale.clone() };
+      startAnim(o);
+    } else {
+      o.mixer?.stopAllAction();
+      o.mixer = null;
+      o.action = null;
+      if (o.saved) {
+        o.root.position.copy(o.saved.p);
+        o.root.quaternion.copy(o.saved.q);
+        o.root.scale.copy(o.saved.s);
+      }
+    }
+  }
+  btnPlay.textContent = on ? '■ Stop' : '▶ Play';
+  btnPlay.classList.toggle('on', on);
+  status(on ? 'Playing' : 'Edit mode');
+  refresh();
+}
+
+/* ================= Keyboard ================= */
+addEventListener('keydown', e => {
+  if (!project) return;
+  const ctrl = e.ctrlKey || e.metaKey;
+  if (ctrl && e.code === 'KeyS') { e.preventDefault(); saveProject(); return; }
+  if (ctrl && e.code === 'KeyD') { e.preventDefault(); if (!playing) duplicateSelected(); return; }
+  if (ctrl && e.code === 'KeyG') { e.preventDefault(); if (!playing) combineSelected(); return; }
+  if (['INPUT', 'SELECT'].includes(e.target.tagName)) return;
+  const modes = { KeyW: 'translate', KeyE: 'rotate', KeyR: 'scale' };
+  if (modes[e.code] && !playing) tc.setMode(modes[e.code]);
+  if (e.code === 'KeyP') setPlaying(!playing);
+  if ((e.code === 'Delete' || e.code === 'Backspace') && multi.size && !playing) deleteSelected();
+  if (e.code === 'KeyF' && selected) orbit.target.copy(selected.root.getWorldPosition(new THREE.Vector3()));
+});
+
+/* ================= Resize and loop ================= */
+function resize() {
+  const w = vp.clientWidth, h = vp.clientHeight;
+  if (!w || !h) return;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(vp);
+
+const clock = new THREE.Clock();
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = clock.getDelta();
+  if (playing) for (const o of objects) o.mixer?.update(dt);
+  orbit.update();
+  if (!editorEl.hidden) renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>
